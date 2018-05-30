@@ -14,8 +14,9 @@ import subprocess
 import sys
 import tempfile
 
-import numpy as np
 import h5py
+import numpy as np
+from scipy.ndimage import measurements
 
 import freestream
 import frzout
@@ -137,6 +138,10 @@ def parse_args_checkpoint():
 
 
 parser.add_argument(
+    'ic', type=os.path.abspath,
+    help=argparse.SUPPRESS
+)
+parser.add_argument(
     'results', type=os.path.abspath,
     help=argparse.SUPPRESS
 )
@@ -207,158 +212,6 @@ class StopEvent(Exception):
     """ Raise to end an event early. """
 
 
-class Trento:
-    """
-    Generates p+Pb and Pb+Pb trento events using either a minimum bias
-    trigger or specialized high multiplicity trigger,
-    
-    trigger low < mult/<mult> < trigger high,
-
-    to mimic the event selection used by experiment.
-
-    """
-    def __init__(self, args, batch_size=10**3, initial_file='initial.hdf'):
-        self.args = args
-        self.batch_size = batch_size
-        self.initial_file = initial_file
-
-        self.system = ' '.join(sorted(args.projectiles.split()))
-        self.pPb_event = (self.system == 'Pb p')
-
-        self.grid_step = args.grid_scale * args.parton_width
-        self.grid_max = (12 if self.pPb_event else 15)
-
-        self.used = defaultdict(set)
-
-    @property
-    def triggers(self):
-        """
-        All Pb+Pb observables use a minimum bias trigger, while some p+Pb
-        observables are calculated from a minimum bias trigger and others
-        use specific multiplicity triggers. This function yields trigger
-        bins (minimum bias or mult/<mult> cuts) for each event.
-
-        """
-        minimum_bias = (0, float('inf'))
-
-        pPb_bins = [
-            (  minimum_bias,  8),
-            ((1.218, 1.303),  4),
-            ((1.807, 1.891),  4),
-            ((2.395, 2.479),  4),
-            ((2.983, 3.067),  4),
-            ((3.571, 3.655),  4),
-            ((4.160, 4.244),  4),
-            ((4.748, 4.832),  4),
-            ((5.336, 5.420),  4),
-            ((1.250, 1.500), 15),
-            ((1.500, 2.000), 15),
-            ((2.000, 2.500), 15),
-            ((2.500, 3.000), 15),
-            ((3.000, 3.750), 15),
-            ((3.750, 4.625), 15),
-            ((4.625, 5.500), 15),
-            ((5.500, 6.000), 15),
-        ]
-
-        pPb_triggers, pPb_weights = zip(*pPb_bins)
-
-        while True:
-            trigger = choices(pPb_triggers, weights=pPb_weights).pop()
-            yield trigger if self.pPb_event else minimum_bias
-
-    def find_event(self, trigger, norm=1, regen=False):
-        """
-        Searches through the batch of trento events and looks for the first
-        event which satisfies the specified trigger,
-
-        trigger min < mult/<mult> < trigger max
-
-        Rescale the initial condition normalization if the trigger bin edges
-        are larger than the maximum multiplicity of the minimum bias sample.
-
-        Run a new minimum bias sample if the trigger bin width is simply
-        too narrow to find a suitable event.
-
-        """
-        if regen or not os.path.exists(self.initial_file):
-            try:
-                os.remove(self.initial_file)
-                logging.info('running new batch of trento events')
-            except FileNotFoundError:
-                pass
-
-            run_cmd(
-                'trento {}'.format(self.system),
-                '--number-events {}'.format(self.batch_size),
-                '--grid-step {} --grid-max {}'.format(self.grid_step, self.grid_max),
-                '--parton-width {}'.format(self.args.parton_width),
-                '--output', self.initial_file,
-                self.args.trento_args,
-            )
-
-            self.used = defaultdict(set)
-
-        with h5py.File(self.initial_file, 'r') as f:
-
-            mean_mult = np.mean([ev.attrs['mult'] for ev in f.values()])
-            nev_used = len([ev for ev in chain(*self.used.values())])
-            batch_exhausted = (nev_used > int(1e-2*self.batch_size))
-            depleted_batch = (self.pPb_event and batch_exhausted)
-
-            def not_used(ev):
-                return ev.name not in self.used[trigger]
-
-            def trigger_hit(ev):
-                bin_min, bin_max = trigger
-                triggered = bin_min < norm*ev.attrs['mult']/mean_mult < bin_max
-                return triggered and not_used(ev) and not depleted_batch
-
-            for ev in filter(trigger_hit, f.values()):
-                self.used[trigger].add(ev.name)
-                return norm*np.array(ev)
-
-            max_event = max(
-                filter(not_used, f.values()),
-                key=lambda ev: ev.attrs['mult'],
-                default=None
-            )
-
-            renormalize = (
-                (max_event is not None) and
-                (max_event.attrs['mult']/mean_mult < trigger[0]) and
-                not depleted_batch 
-            )
-
-            if renormalize:
-                logging.info('trigger is too selective, increasing ic norm')
-                new_norm = trigger[1] / (max_event.attrs['mult']/mean_mult)
-                self.used[trigger].add(max_event.name)
-                return self.find_event(trigger, norm=new_norm)
-
-            return self.find_event(trigger, regen=True)
-
-    def __iter__(self):
-        """
-        Randomly samples the available triggers and yields one event per trigger
-
-        """
-        for trigger in self.triggers:
-
-            logging.info('initial entropy/<entropy> trigger: {}'.format(trigger))
-            ic = self.find_event(trigger)
-
-            # Write the checkpoint file _before_ starting the event so that
-            # even if the process is forcefully killed, the state will be
-            # saved.  If / when all events complete, delete the file.
-            if self.args.checkpoint is not None:
-                with open(self.args.checkpoint, 'wb') as cf:
-                    pickle.dump((self.args, ic, trigger), cf, pickle.HIGHEST_PROTOCOL)
-                logging.info('wrote checkpoint file %s', self.args.checkpoint)
-
-            yield ic, trigger
-
-
 def run_events(args, results_file, checkpoint_ic=None):
     """
     Run events as determined by user input:
@@ -370,29 +223,17 @@ def run_events(args, results_file, checkpoint_ic=None):
     Return True if at least one event completed successfully, otherwise False.
 
     """
-    trento_events = Trento(args)
-    pPb_event = trento_events.pPb_event
+    trento_event = np.load(args.ic)
+    grid_step = args.grid_scale * args.parton_width
+    grid_n = set(trento_event.shape).pop()
+    grid_max = 0.5*grid_n*grid_step
 
-    grid_step = trento_events.grid_step
-    grid_n = math.ceil(2*trento_events.grid_max/grid_step)
-    grid_max = .5*grid_n*grid_step
+    initial_conditions = [trento_event]
 
     logging.info(
         'grid step = %.6f fm, n = %d, max = %.6f fm',
         grid_step, grid_n, grid_max
     )
-
-    if checkpoint_ic is None:
-        # if nevents was specified, generate that number of initial conditions
-        # otherwise generate indefinitely
-        initial_conditions = (
-            chain.from_iterable(trento_events for _ in repeat(None))
-            if args.nevents is None else
-            islice(trento_events, args.nevents)
-        )
-    else:
-        # just run the checkpointed IC
-        initial_conditions = [checkpoint_ic]
 
     # create sampler HRG object (to be reused for all events)
     hrg_kwargs = dict(species='urqmd', res_width=True)
@@ -402,14 +243,7 @@ def run_events(args, results_file, checkpoint_ic=None):
     eswitch = hrg.energy_density()
     hydro_args = [args.hydro_args, 'edec={}'.format(eswitch)]
 
-    # arguments for "coarse" hydro pre-runs
-    # no viscosity, run down to low temperature 110 MeV
-    hydro_args_coarse = [
-        'etas_hrg=0 etas_min=0 etas_slope=0 zetas_max=0 zetas_width=0',
-        'edec={}'.format(frzout.HRG(.110, **hrg_kwargs).energy_density())
-    ]
-
-    def run_hydro(fs, event_size, coarse=False, dt_ratio=.25):
+    def run_hydro(fs, event_size, dt_ratio=.25):
         """
         Run the initial condition contained in FreeStreamer object `fs` through
         osu-hydro on a grid with approximate physical size `event_size` [fm].
@@ -418,16 +252,11 @@ def run_events(args, results_file, checkpoint_ic=None):
 
         Initial condition arrays are cropped or padded as necessary.
 
-        If `coarse` is an integer > 1, use only every `coarse`th cell from the
-        initial condition arrays (thus increasing the physical grid step size
-        by a factor of `coarse`).  Ignore the user input `hydro_args` and
-        instead run ideal hydro down to a low temperature.
-
         `dt_ratio` sets the timestep as a fraction of the spatial step
         (dt = dt_ratio * dxy).  The SHASTA algorithm requires dt_ratio < 1/2.
 
         """
-        dxy = grid_step * (coarse or 1)
+        dxy = grid_step
         ls = math.ceil(event_size/dxy)  # the osu-hydro "ls" parameter
         n = 2*ls + 1  # actual number of grid cells
 
@@ -438,9 +267,6 @@ def run_events(args, results_file, checkpoint_ic=None):
         ]:
             for a in arglist:
                 X = f(*a)
-
-                if coarse:
-                    X = X[::coarse, ::coarse]
 
                 diff = X.shape[0] - n
                 start = int(abs(diff)/2)
@@ -463,8 +289,7 @@ def run_events(args, results_file, checkpoint_ic=None):
 
         run_cmd(
             'osu-hydro',
-            't0={} dt={} dxy={} nls={}'.format(args.tau_fs, dt, dxy, ls),
-            *(hydro_args_coarse if coarse else hydro_args)
+            't0={} dt={} dxy={} nls={}'.format(args.tau_fs, dt, dxy, ls), *hydro_args
         )
 
         surface = np.fromfile('surface.dat', dtype='f8').reshape(-1, 16)
@@ -481,53 +306,30 @@ def run_events(args, results_file, checkpoint_ic=None):
         #   pitt  pitx  pity  pixx  pixy  piyy  pizz  Pi
 
         # pack surface data into a dict suitable for passing to frzout.Surface
-        return dict(
+        surface = dict(
             zip(['x', 'sigma', 'v'], np.hsplit(surface, [3, 6, 8])),
             pi=dict(zip(['xx', 'xy', 'yy'], surface.T[11:14])),
             Pi=surface.T[15]
         )
 
-    # species (name, ID) for identified particle observables
-    species = [
-        ('pion',     211),
-        ('kaon',     321),
-        ('proton',  2212),
-        ('Lambda',  3122),
-        ('Sigma0',  3212),
-        ('Xi',      3312),
-        ('Omega',   3334),
-    ]
+        # save surface file
+        pickle.dump(surface, results_file)
+
+        return surface
 
     # fully specify numeric data types, including endianness and size, to
     # ensure consistency across all machines
     float_t = '<f8'
     int_t = '<i8'
-    complex_t = '<c16'
 
-    # results "array" (one element)
-    # to be overwritten for each event
-    results = np.empty((), dtype=[
-        ('trigger', (float_t, 2)),
-        ('init_entropy', float_t),
-        ('nsamples', int_t),
-        ('dNch_deta', float_t),
-        ('dET_deta', float_t),
-        ('mean_pT', [('N', float_t), ('pT', float_t)]),
-        ('iden_dN_dy', [(s, float_t) for (s, _) in species]),
-        ('iden_mean_pT', [(s, [('N', float_t), ('pT', float_t)]) for (s, _) in species]),
-        ('pT_fluct', [('N', int_t), ('sum_pT', float_t), ('sum_pTsq', float_t)]),
-        ('flow', [(expt, [('N', int_t), ('Qn', complex_t, 8)]) for expt in ('alice', 'cms')]),
-    ])
-
-    def run_single_event(ic, trigger):
+    def run_single_event(ic):
         """
         Run the initial condition event contained in HDF5 dataset object `ic`
         and save observables to `results`.
 
         """
-        results.fill(0)
-        results['trigger'] = trigger
-        results['init_entropy'] = ic.sum() * grid_step**2
+        entropy = ic.sum() * grid_step**2
+        logging.info('initial entropy = {0:.3f}'.format(entropy))
 
         assert all(n == grid_n for n in ic.shape)
 
@@ -537,19 +339,9 @@ def run_events(args, results_file, checkpoint_ic=None):
         )
         fs = freestream.FreeStreamer(ic, grid_max, args.tau_fs)
 
-        # run coarse event on large grid and determine max radius
-        coarse = 3 
-
-        rmax = math.sqrt((
-            run_hydro(
-                fs, event_size=(15 if pPb_event else 27), coarse=coarse
-            )['x'][:, 1:3]**2
-        ).sum(axis=1).max())
-        logging.info('rmax = %.3f fm', rmax)
-
         # now run normal event with size set to the max radius
         # and create sampler surface object
-        surface = frzout.Surface(**run_hydro(fs, event_size=rmax), ymax=2)
+        surface = frzout.Surface(**run_hydro(fs, event_size=2*grid_max), ymax=2)
         logging.info('%d freeze-out cells', len(surface))
 
         minsamples, maxsamples = 10, 10**5  # reasonable range for nsamples
@@ -576,12 +368,6 @@ def run_events(args, results_file, checkpoint_ic=None):
         if nparts == 0:
             raise StopEvent('no particles produced')
 
-        # try to free some memory
-        # (up to ~a few hundred MiB for ultracentral collisions)
-        del surface
-
-        results['nsamples'] = nsamples
-
         # hadronic afterburner
         run_cmd('afterburner particles_in.dat particles_out.dat')
 
@@ -601,85 +387,23 @@ def run_events(args, results_file, checkpoint_ic=None):
                 ]
             )
 
-        logging.info('computing observables')
-
-        charged = (parts['charge'] != 0)
-        abs_eta = np.fabs(parts['eta'])
-        abs_ID = np.abs(parts['ID'])
-
-        pT = parts['pT']
-        phi = parts['phi']
-
-        eta_max = .8
-
-        '''
+        """
         dNch/deta
 
-        '''
-        results['dNch_deta'] = \
-            np.count_nonzero(charged & (abs_eta < eta_max)) / (2*eta_max) / nsamples
-
-        '''
-        dET/deta
-
-        '''
-        results['dET_deta'] = \
-            parts['ET'][abs_eta < eta_max].sum() / (2*eta_max) / nsamples
-
-        '''
-        mean pT
-
-        '''
-        cut = charged & (abs_eta < eta_max) & (.15 < pT) & (pT < 10.)
-        N = np.count_nonzero(cut)
-        results['mean_pT'] = (
-            N / nsamples,
-            (pT[cut].mean() if N > 0 else 0)
-        )
-
-        '''
-        identified dN/dy and mean pT
-
-        '''
-        for name, pid in species:
-            cut = (abs_ID == pid) & (np.fabs(parts['y']) < .5)
-            N = np.count_nonzero(cut)
-            results['iden_dN_dy'][name] = N / nsamples
-            results['iden_mean_pT'][name] = (
-                N / nsamples,
-                (pT[cut].mean() if N > 0 else 0)
-            )
-
-        '''
-        mean pT fluctuations
-
-        '''
-        cut = charged & (abs_eta < .8) & (.15 < pT) & (pT < 2.)
-        results['pT_fluct']['N'] = pT[cut].size
-        results['pT_fluct']['sum_pT'] = pT[cut].sum()
-        results['pT_fluct']['sum_pTsq'] = np.inner(pT[cut], pT[cut])
-
-        '''
-        flow Q-vectors
-
-        '''
-        cut_alice = charged & (abs_eta < .8) & (.2 < pT) & (pT < 5.)
-        cut_cms = charged & (abs_eta < .8) & (.3 < pT) & (pT < 3.) 
-        for expt, cut in [('alice', cut_alice), ('cms', cut_cms)]:
-            results['flow'][expt]['N'] = phi[cut].size
-            results['flow'][expt]['Qn'] = [
-                np.exp(1j*n*phi[cut]).sum()
-                for n in range(1, results.dtype['flow'][expt]['Qn'].shape[0] + 1)
-            ]
+        """
+        abs_eta = np.fabs(parts['eta'])
+        charged = (parts['charge'] != 0)
+        dnch_deta = np.count_nonzero(charged & (abs_eta < .5)) / nsamples
+        logging.info('dNch/deta = {0:.3f}'.format(dnch_deta))
 
     nfail = 0
 
-    # run each initial condition event and save results to file
-    for n, (ic, trigger) in enumerate(initial_conditions, start=1):
+    # run each initial condition event 
+    for n, ic in enumerate(initial_conditions, start=1):
         logging.info('starting event %d', n)
 
         try:
-            run_single_event(ic, trigger)
+            run_single_event(ic)
         except StopEvent as e:
             logging.info('event stopped: %s', e)
         except Exception:
@@ -691,7 +415,6 @@ def run_events(args, results_file, checkpoint_ic=None):
             logging.warning('continuing to next event')
             continue
 
-        results_file.write(results.tobytes())
         logging.info('event %d completed successfully', n)
 
     # end of events: if running with a checkpoint, delete the file unless this
