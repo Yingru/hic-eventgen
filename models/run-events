@@ -341,7 +341,7 @@ def run_events(args, results_file, checkpoint_ic=None):
 
         # now run normal event with size set to the max radius
         # and create sampler surface object
-        surface = frzout.Surface(**run_hydro(fs, event_size=2*grid_max), ymax=2)
+        surface = frzout.Surface(**run_hydro(fs, event_size=3*grid_max), ymax=2)
         logging.info('%d freeze-out cells', len(surface))
 
         minsamples, maxsamples = 10, 10**5  # reasonable range for nsamples
@@ -398,7 +398,7 @@ def run_events(args, results_file, checkpoint_ic=None):
 
     nfail = 0
 
-    # run each initial condition event 
+    # run each initial condition event
     for n, ic in enumerate(initial_conditions, start=1):
         logging.info('starting event %d', n)
 
