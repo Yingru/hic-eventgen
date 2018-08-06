@@ -7,10 +7,10 @@
 #SBATCH --license cscratch1
 #SBATCH --mail-type ALL
 #SBATCH --mail-user <email>
-#SBATCH --output /global/cscratch1/sd/jsm55/slurm/%x-%j
-#SBATCH --error  /global/cscratch1/sd/jsm55/slurm/%x-%j
+#SBATCH --output /global/cscratch1/sd/yx59/slurm/%x-%j
+#SBATCH --error  /global/cscratch1/sd/yx59/slurm/%x-%j
 
-export CONDA_PREFIX=/global/common/software/<project>/<prefix>
+export CONDA_PREFIX=/global/common/software/m2730/hic_HQ-yx
 export PATH=$CONDA_PREFIX/bin:$PATH
 export XDG_DATA_HOME=$CONDA_PREFIX/share
 
