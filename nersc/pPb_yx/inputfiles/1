@@ -1,0 +1,6 @@
+projectiles = p Pb
+parton-width = 0.431
+trento-args = --cross-section 7.0 --normalization 20.20689014929151 --reduced-thickness 0.005904441105857616 --fluctuation 0.19091 --nucleon-min-dist 0.808355 --nucleon-width 0.9197368679097524 --parton-number 6
+tau-fs = 0.3685735023475759
+hydro-args = etas_min=0.10907296830676631 etas_slope=1.5882329009249432 etas_curv=-0.28954747262567593 zetas_max=0.03248602487445161 zetas_width=0.023727129623713546 zetas_t0=0.17530163264152054
+Tswitch = 0.151

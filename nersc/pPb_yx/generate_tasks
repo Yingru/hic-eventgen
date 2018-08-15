@@ -1,0 +1,10 @@
+#!/bin/bash
+
+ntasks=100
+job=$NERSC_HOST-run1
+
+for (( n = 0; n < $ntasks; ++n )); do
+  inputfile=1
+  taskID=$n
+  echo bash design-wrapper $inputfile $taskID >> tasks
+done

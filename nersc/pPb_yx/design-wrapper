@@ -1,0 +1,22 @@
+#!/bin/bash
+
+export CONDA_PREFIX=/global/common/software/m2730/hic_yx
+export PATH=$CONDA_PREFIX/bin:$PATH
+export XDG_DATA_HOME=$CONDA_PREFIX/share
+
+
+job=$NERSC_HOST-$SLURM_JOB_ID
+inputfile=$1
+taskID=$2
+
+echo $job
+echo $inputfile
+cat $CSCRATCH/pPb4/inputfiles/$inputfile 
+echo $taskID
+
+run-events \
+  --nevents 10 \
+  --logfile $CSCRATCH/pPb4/logs/$job/$inputfile/$taskID.log \
+  --checkpoint $CSCRATCH/pPb4/checkpoints/$job/$inputfile/$taskID.pkl \
+  @$CSCRATCH/pPb4/inputfiles/$inputfile \
+  $CSCRATCH/pPb4/events/$job/$inputfile/$taskID.dat
