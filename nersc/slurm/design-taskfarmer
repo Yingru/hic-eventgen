@@ -1,25 +1,25 @@
 #!/bin/bash
 #SBATCH --qos regular
 #SBATCH --constraint haswell
-#SBATCH --nodes 200
-#SBATCH --cpus-per-task 64
-#SBATCH --time 24:00:00
+#SBATCH --nodes 2
+#SBATCH --cpus-per-task 32
+#SBATCH --time 01:00:00
 #SBATCH --license cscratch1
 #SBATCH --mail-type ALL
-#SBATCH --mail-user morelandjs@gmail.com
-#SBATCH --output  /global/cscratch1/sd/jsm55/slurm/%x-%j
-#SBATCH --error   /global/cscratch1/sd/jsm55/slurm/%x-%j
-#SBATCH --workdir /global/cscratch1/sd/jsm55/inputfiles
+#SBATCH --mail-user yx59@duke.edu
+#SBATCH --output  /global/cscratch1/sd/yx59/slurm/%x-%j
+#SBATCH --error   /global/cscratch1/sd/yx59/slurm/%x-%j
+#SBATCH --workdir /global/cscratch1/sd/yx59/pPb2/inputfiles
 
 
 # export environment variables
-export CONDA_PREFIX=/global/common/software/m2730/qm18-partons
+export CONDA_PREFIX=/global/common/software/m2730/hic_yx
 export PATH=$CONDA_PREFIX/bin:$PATH
 export XDG_DATA_HOME=$CSCRATCH/share
 export THREADS=32
 
 # design input files
-design=qm18-partons/main/pPb5020
+design=$CSCRATCH/pPb2/inputfiles
 inputfiles=$(find $design -type f)
 ntasks=200
 
@@ -49,8 +49,8 @@ for file in $inputfiles; do
       --nevents 25 \
       --grid-scale 0.2 \
       --logfile $CSCRATCH/logs/$job/$file/$task.log \
-      @$CSCRATCH/inputfiles/$file \
-      $CSCRATCH/events/$file/$job/$task.dat >> tasks
+      @$CSCRATCH/pPb2/inputfiles/$file \
+      $CSCRATCH/events/pPb2/$file/$job/$task.dat >> tasks
   done
 done
 
