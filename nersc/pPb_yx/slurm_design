@@ -1,0 +1,33 @@
+#!/bin/bash
+#SBATCH --qos regular
+#SBATCH --constraint haswell
+#SBATCH --nodes 1
+#SBATCH --cpus-per-task 1
+#SBATCH --time 00:30:00
+#SBATCH --license cscratch1
+#SBATCH --mail-type ALL
+#SBATCH --mail-user yx59@duke.edu
+#SBATCH --output  /global/cscratch1/sd/yx59/slurm/%x-%j
+#SBATCH --error   /global/cscratch1/sd/yx59/slurm/%x-%j
+#SBATCH --workdir /global/cscratch1/sd/yx59/pPb2
+
+export CONDA_PREFIX=/global/common/software/m2730/hic_yx
+export PATH=$CONDA_PREFIX/bin:$PATH
+export XDG_DATA_HOME=$CONDA_PREFIX/share
+
+job=$NERSC_HOST-$SLURM_JOB_ID
+ntasks=$(( SLURM_JOB_NUM_NODES * SLURM_CPU_ON_NODE ))
+
+echo $PATH
+echo $PWD
+echo $job
+echo $ntasks
+
+srun run-events\
+  --nevents 10 \
+  --rankvar SLURM_PROCID \
+  --rankfmt "{:0${#ntasks}d}" \
+  --logfile $CSCRATCH/logs/$job/1.log \
+  --checkpoint $CSCRATCH/checkpoints/$job/1.pkl \
+  @$CSCRATCH/pPb2/inputfiles/1 \
+  $CSCRATCH/events/pPb2/1/$job.dat
