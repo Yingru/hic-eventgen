@@ -1,10 +1,13 @@
 #!/bin/sh
-#SBATCH -N 2 -c 64
-#SBATCH -p debug
-#SBATCH -t 00:30:00
-#SBATCH -C haswell
+#SBATCH --nodes=2
+#SBATCH --cpus-per-task=64
+#SBATCH --qos regular
+#SBATCH --time 02:00:00
+#SBATCH --constraint haswell
+#SBATCH --mail-type ALL
+#SBATCH --mail-user yx59@duke.edu
 
-cd $CSCRATCH/pPb4
+cd $CSCRATCH/pPb_20180815
 
 export CONDA_PREFIX=/global/common/software/m2730/hic_yx
 export PATH=$CONDA_PREFIX/bin:/usr/common/tig/taskfarmer/1.5/bin:$(pwd):$PATH

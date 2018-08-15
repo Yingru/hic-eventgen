@@ -9,14 +9,20 @@ job=$NERSC_HOST-$SLURM_JOB_ID
 inputfile=$1
 taskID=$2
 
+echo "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
+echo "This is jobID"
 echo $job
+echo "This is inputfile" 
 echo $inputfile
-cat $CSCRATCH/pPb4/inputfiles/$inputfile 
+cat $CSCRATCH/pPb_20180815/inputfiles/$inputfile 
+echo "This is taskID"
 echo $taskID
+echo "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@"
+
 
 run-events \
-  --nevents 10 \
-  --logfile $CSCRATCH/pPb4/logs/$job/$inputfile/$taskID.log \
-  --checkpoint $CSCRATCH/pPb4/checkpoints/$job/$inputfile/$taskID.pkl \
-  @$CSCRATCH/pPb4/inputfiles/$inputfile \
-  $CSCRATCH/pPb4/events/$job/$inputfile/$taskID.dat
+  --nevents 25 \
+  --logfile $CSCRATCH/pPb_20180815/logs/$job/$inputfile/$taskID.log \
+  --checkpoint $CSCRATCH/pPb_20180815/checkpoints/$job/$inputfile/$taskID.pkl \
+  @$CSCRATCH/pPb_20180815/inputfiles/$inputfile \
+  $CSCRATCH/pPb_20180815/events/$job/$inputfile/$taskID.dat
